@@ -1,47 +1,52 @@
 import { Router, Request, Response } from 'express';
-
 import { User } from '../models/User';
-
 import * as bcrypt from 'bcrypt';
 import * as jwt from 'jsonwebtoken';
 import { NextFunction } from 'connect';
 
 import * as EmailValidator from 'email-validator';
+import { config } from '../../../../config/config';
 
 const router: Router = Router();
 
 async function generatePassword(plainTextPassword: string): Promise<string> {
-    //@TODO Use Bcrypt to Generated Salted Hashed Passwords
+    //Use Bcrypt to Generated Salted Hashed Passwords
+    const rounds = 10;
+    const salt = await bcrypt.genSalt(rounds);
+    const hash = await bcrypt.hash(plainTextPassword, salt);
+    return hash;
 }
 
 async function comparePasswords(plainTextPassword: string, hash: string): Promise<boolean> {
-    //@TODO Use Bcrypt to Compare your password to your Salted Hashed Password
+    console.log(`comparePasswords received plainTextPassword=${plainTextPassword} and hash=${hash}`);
+    //Use Bcrypt to Compare your password to your Salted Hashed Password
+    return bcrypt.compare(plainTextPassword, hash);
 }
 
 function generateJWT(user: User): string {
-    //@TODO Use jwt to create a new JWT Payload containing
+    //Use jwt to create a new JWT Payload containing
+    return jwt.sign(user, config.jwt.secret);
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-    return next();
-    // if (!req.headers || !req.headers.authorization){
-    //     return res.status(401).send({ message: 'No authorization headers.' });
-    // }
-    
 
-    // const token_bearer = req.headers.authorization.split(' ');
-    // if(token_bearer.length != 2){
-    //     return res.status(401).send({ message: 'Malformed token.' });
-    // }
+    if (!req.headers || !req.headers.authorization){
+        return res.status(401).send({ message: 'No authorization headers.' });
+    }
     
-    // const token = token_bearer[1];
+    const token_bearer = req.headers.authorization.split(' ');
+    if(token_bearer.length != 2){
+        return res.status(401).send({ message: 'Malformed token.' });
+    }
+    
+    const token = token_bearer[1];
 
-    // return jwt.verify(token, "hello", (err, decoded) => {
-    //   if (err) {
-    //     return res.status(500).send({ auth: false, message: 'Failed to authenticate.' });
-    //   }
-    //   return next();
-    // });
+    return jwt.verify(token, config.jwt.secret, (err, decoded) => {
+      if (err) {
+        return res.status(500).send({ auth: false, message: 'Failed to authenticate.' });
+      }
+      return next();
+    });
 }
 
 router.get('/verification', 
@@ -53,33 +58,30 @@ router.get('/verification',
 router.post('/login', async (req: Request, res: Response) => {
     const email = req.body.email;
     const password = req.body.password;
+    
     // check email is valid
     if (!email || !EmailValidator.validate(email)) {
         return res.status(400).send({ auth: false, message: 'Email is required or malformed' });
     }
-
+    console.log(`Email OK`);
     // check email password valid
     if (!password) {
         return res.status(400).send({ auth: false, message: 'Password is required' });
     }
-
     const user = await User.findByPk(email);
     // check that user exists
     if(!user) {
         return res.status(401).send({ auth: false, message: 'Unauthorized' });
     }
-
     // check that the password matches
-    const authValid = await comparePasswords(password, user.password_hash)
-
+    const authValid = await comparePasswords(password, user.password_hash);
     if(!authValid) {
         return res.status(401).send({ auth: false, message: 'Unauthorized' });
     }
 
     // Generate JWT
-    const jwt = generateJWT(user);
-
-    res.status(200).send({ auth: true, token: jwt, user: user.short()});
+    const token = generateJWT(user.toJSON());
+    res.status(200).send({ auth: true, token: token, user: user.short()});
 });
 
 //register a new user
@@ -105,7 +107,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     const password_hash = await generatePassword(plainTextPassword);
 
-    const newUser = await new User({
+    const newUser = new User({
         email: email,
         password_hash: password_hash
     });
@@ -118,9 +120,9 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Generate JWT
-    const jwt = generateJWT(savedUser);
+    const token = generateJWT(savedUser.toJSON());
 
-    res.status(201).send({token: jwt, user: savedUser.short()});
+    res.status(201).send({token: token, user: savedUser.short()});
 });
 
 router.get('/', async (req: Request, res: Response) => {
